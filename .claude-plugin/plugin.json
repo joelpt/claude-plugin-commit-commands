@@ -1,0 +1,10 @@
+{
+  "name": "commit-commands",
+  "displayName": "Commit Commands",
+  "description": "Atomic git commits with code review + simplify pre-flight, enforcing project git rules. Replaces claude-plugins-official commit-commands.",
+  "version": "1.1.1",
+  "author": {
+    "name": "Joel Thornton",
+    "email": "joelpt@gmail.com"
+  }
+}
