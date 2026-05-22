@@ -2,7 +2,7 @@
 
 ## Architecture
 
-Preflight gating (which of code-review / Codex / simplify to run) is decided
+Preflight gating (which of code-review / Codex / /code-review high to run) is decided
 **deterministically** by `scripts/determine-preflight.py`, invoked as a `!`
 directive in `commands/commit.md` and `commands/commitall.md`. It measures
 Δloc, cognitive complexity (Python, complexipy), cyclomatic complexity (other
@@ -31,21 +31,17 @@ are warm. `--quiet` hides the install chatter — not a hang.
 
 ## Rejected
 
-- [ ] **Cache `git diff` to a tmp file, pass path to reviewer / simplify** —
-  `feature-dev:code-reviewer`, `/codex:review`, and `Skill(simplify)` all
+- [ ] **Cache `git diff` to a tmp file, pass path to reviewers** —
+  `feature-dev:code-reviewer`, `tao:code-reviewer`, and `Skill("code-review")` all
   re-derive live git state by design (reviewers need blame/history/context a
-  diff snapshot omits; simplify edits real files). A shared snapshot adds a
-  staleness invariant for zero orchestrator-token savings, since their
-  re-derivation already runs in isolated subagent contexts.
+  diff snapshot omits). A shared snapshot adds a staleness invariant for zero
+  orchestrator-token savings, since their re-derivation already runs in isolated
+  subagent contexts.
 
 ## Deferred (correctness / quality trade-off not worth it)
 
 - [ ] **Run code-reviewer on Haiku** — lower cost but meaningfully lower catch
   rate on subtle bugs and security issues; paying the Sonnet tax is deliberate.
-
-- [ ] **Combine review + simplify into one agent pass** — the two passes catch
-  different things: review finds bugs, simplify finds quality/redundancy. One
-  pass degrades both.
 
 - [ ] **Cognitive complexity for non-Python code** — complexipy is Python-only;
   other languages use cyclomatic (lizard). A cross-language cognitive metric
