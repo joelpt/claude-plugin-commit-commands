@@ -10,17 +10,15 @@ speaks only of "in-scope changes".
 
 DEFINITIONS:
    "call code review": spawn the `feature-dev:code-reviewer` agent via the Agent tool (subagent_type `feature-dev:code-reviewer`) scoped to the in-scope changed files. Show full findings using colorized output and emojis; auto-fix Critical/Important.
-   "call Codex": spawn the `tao:code-reviewer` agent via the Agent tool (subagent_type `tao:code-reviewer`) scoped to the in-scope changed files. Show full findings using colorized output and emojis; auto-fix High/Critical issues and for ambiguous/major changes, before auto-fixing, use AskUserQuestion to explain each change, the pro/con, and ask the user if/how to proceed.
    "run code-review": run `Skill("code-review")` on all in-scope code files; auto-fix Critical/Important findings.
    "run code-review high": run `Skill("code-review", "high")` on all in-scope code files; auto-fix Critical/Important findings.
 
 STEPS:
 
-1. The **Preflight determination** in `## Context` is computed deterministically (Δloc, cognitive/cyclomatic complexity, file classes, path-sensitivity, git regression-gravity). **Execute its "Preflight steps to follow" verbatim, in order** — they already encode the code-review / Codex / code-review-high decision and the post-fix re-review step. Apply the auto-fix/HITL semantics from DEFINITIONS to each step. Do not re-derive the gating yourself; the determiner has done it.
-   - **Fallback** — only if the determination is absent or prints `DETERMINER_UNAVAILABLE`: judge manually — trivial/docs/config/data-only → skip all; non-trivial & ≤10 code files → call code review + run code-review; highly complex and/or >10 code files → call code review + call Codex in parallel, then run code-review high.
-2. Re-review after fixes. On the determiner path this is already the determiner's final emitted step (do not double-run it). On the **fallback** path only: if any files were changed by step 1, re-call code review on a fresh `git diff`, auto-fix, and re-run code-review (or code-review high if complex/sensitive).
-3. If the post-fix re-review made further changes, **STOP**, explain to user; do not commit. If the reviewer found **any** issues (Critical, Important, minor, or suggestions): `AskUserQuestion` "Found N issues and M suggestions. Fix any before committing, or proceed?"
-4. Perform commit loop, below.
+1. The **Preflight determination** in `## Context` is computed deterministically (Δloc, cognitive/cyclomatic complexity, file classes, path-sensitivity, git regression-gravity). **Execute its "Preflight steps to follow" verbatim, in order** — they encode the appropriate review intensity for the changeset. Apply the auto-fix/HITL semantics from DEFINITIONS to each step. Do not re-derive the gating yourself; the determiner has done it.
+   - **Fallback** — only if the determination is absent or prints `DETERMINER_UNAVAILABLE`: judge manually — trivial/docs/config/data-only → skip all; complex → call code review + run code-review high; sensitive (not complex) → call code review + run code-review; non-trivial otherwise → run code-review.
+2. If the reviewer found **any** issues (Critical, Important, minor, or suggestions): `AskUserQuestion` "Found N issues and M suggestions. Fix any before committing, or proceed?"
+3. Perform commit loop, below.
 
 ## Commit Loop
 

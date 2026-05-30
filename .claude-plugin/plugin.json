@@ -1,8 +1,8 @@
 {
   "name": "commit-commands",
   "displayName": "Commit Commands",
-  "description": "Atomic git commits with deterministic code review pre-flight (feature-dev + tao + built-in /code-review), enforcing project git rules. Replaces claude-plugins-official commit-commands.",
-  "version": "2026.05.22.2",
+  "description": "Atomic git commits with deterministic code review pre-flight (feature-dev:code-reviewer + built-in /code-review), enforcing project git rules. Replaces claude-plugins-official commit-commands.",
+  "version": "2026.05.29.1",
   "author": {
     "name": "Joel Thornton",
     "email": "joelpt@gmail.com"

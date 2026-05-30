@@ -280,14 +280,14 @@ def decide(changes: list[FileChange]) -> tuple[str, list[str], list[str], dict]:
         label = "trivial"
         rationale.append("No code files changed (docs/data/config only) and no "
                           "sensitive paths touched.")
-        steps.append("(none — skip review/codex/code-review; proceed directly to commit)")
+        steps.append("(none — skip code-review; proceed directly to commit)")
     elif trivial and not sensitive:
         label = "trivial"
         rationale.append(
             f"Small, low-complexity code change (code_loc={code_loc}≤{TRIVIAL_LOC}, "
             f"cog={max_cog}≤{TRIVIAL_COG}, ccn={max_ccn}≤{TRIVIAL_CCN}) with no "
             f"sensitive paths or high-gravity files.")
-        steps.append("(none — skip review/codex/code-review; proceed directly to commit)")
+        steps.append("(none — skip code-review; proceed directly to commit)")
     else:
         if sensitive and not complex_ and code_loc <= TRIVIAL_LOC:
             label = "sensitive"
@@ -305,30 +305,21 @@ def decide(changes: list[FileChange]) -> tuple[str, list[str], list[str], dict]:
                 f"Non-trivial code change (code_loc={code_loc}, cog={max_cog}, "
                 f"ccn={max_ccn}).")
 
-        steps.append('Run feature-dev:code-reviewer via the Agent tool '
-                     '(subagent_type "feature-dev:code-reviewer") on the in-scope changed files; '
-                     'show full findings, auto-fix Critical/Important.')
-        if complex_ or sensitive:
-            steps.append("Run tao:code-reviewer via the Agent tool "
-                         "(subagent_type \"tao:code-reviewer\") in parallel with the above; evaluate the "
-                         "combined findings, apply the auto-fix/HITL pattern.")
-            if sens_hits:
-                rationale.append("Sensitivity: " + ", ".join(sens_hits) + ".")
-            if high_gravity:
-                rationale.append("High-gravity files: "
-                                 + ", ".join(f"{p}({g})" for p, g in high_gravity) + ".")
-        if complex_ or sensitive:
+        if sens_hits:
+            rationale.append("Sensitivity: " + ", ".join(sens_hits) + ".")
+        if high_gravity:
+            rationale.append("High-gravity files: "
+                             + ", ".join(f"{p}({g})" for p, g in high_gravity) + ".")
+        if sensitive or complex_:
+            steps.append('Run feature-dev:code-reviewer via the Agent tool '
+                         '(subagent_type "feature-dev:code-reviewer") on the in-scope changed files; '
+                         'show full findings, auto-fix Critical/Important.')
+        if complex_:
             steps.append('Run Skill("code-review", "high") on all in-scope code files; '
                          'auto-fix Critical/Important findings.')
         else:
             steps.append('Run Skill("code-review") on all in-scope code files; '
                          'auto-fix Critical/Important findings.')
-        if complex_ or sensitive:
-            steps.append("If any files changed in the previous steps, re-run "
-                         'feature-dev:code-reviewer on a fresh diff, then re-run Skill("code-review", "high").')
-        else:
-            steps.append("If any files changed in the previous steps, re-run "
-                         'feature-dev:code-reviewer on a fresh diff, then re-run Skill("code-review").')
 
     return label, steps, rationale, metrics
 
