@@ -9,7 +9,10 @@ Decides — without burning model tokens — which (if any) review/code-review
 pre-flight steps a changeset warrants, by measuring:
 
   1. Δloc          — added+deleted lines (whole working tree vs HEAD + untracked)
-  2. complexity    — Python: cognitive (complexipy); other code: cyclomatic (lizard)
+  2. complexity    — Python: cognitive (complexipy); other code: cyclomatic (lizard).
+                     Diff-scoped: only functions the diff actually touched count,
+                     so a docstring/comment/version-string edit to a file with a
+                     gnarly *untouched* function does not inherit its complexity.
   3. file classes  — code vs docs vs data/config
   4. sensitivity   — path globs (auth/crypto/payments/migrations/CI/hooks/...) +
                      git bug-fix "regression gravity" + code deletions
@@ -28,6 +31,7 @@ Per-file metric failures degrade to Δloc rather than aborting.
 """
 from __future__ import annotations
 
+import ast
 import os
 import re
 import subprocess
@@ -76,6 +80,8 @@ SENSITIVITY_RULES: list[tuple[str, re.Pattern[str]]] = [
     ("infra/deploy", re.compile(r"(Dockerfile|docker-compose|\.tf$|/k8s/|/helm/|/terraform/)", re.I)),
 ]
 BUGFIX_MSG_RE = re.compile(r"\b(fix|bug|hotfix|revert|regress|patch)\b", re.I)
+# Unified-diff hunk header: @@ -old[,n] +new[,m] @@ — we key on the new side.
+HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
 def git(*args: str) -> str:
@@ -88,6 +94,132 @@ def git(*args: str) -> str:
         return ""
 
 
+def changed_new_lines(path: str, status: str) -> set[int] | None:
+    """Return new-side line numbers the diff touches, or None for whole-file.
+
+    None signals "treat every line as changed" — used for added/untracked
+    files (no prior version to diff against) and for any diff we cannot parse,
+    so the determiner degrades toward over-review rather than missing a change.
+
+    Args:
+        path: Repo-root-relative file path.
+        status: Single-letter git status (A added, M modified, ...).
+
+    Returns:
+        Set of 1-based new-side line numbers, or None to mean the whole file.
+    """
+    if status == "A":
+        return None
+    out = git("diff", "HEAD", "--unified=0", "--no-renames", "--", path)
+    if not out.strip():
+        return None  # no tracked diff (e.g. untracked) → whole file
+    lines: set[int] = set()
+    for line in out.splitlines():
+        m = HUNK_RE.match(line)
+        if not m:
+            continue
+        start = int(m.group(1))
+        length = int(m.group(2)) if m.group(2) is not None else 1
+        if length == 0:
+            # Pure deletion: no new-side lines exist, but the removal sits
+            # between new lines `start` and `start+1` — count both so a
+            # deletion inside a function still marks that function touched.
+            lines.add(start)
+            lines.add(start + 1)
+        else:
+            lines.update(range(start, start + length))
+    return lines
+
+
+# Languages whose full-line comment token lets us cheaply classify diff lines.
+# Python is absent on purpose: its docstrings have no comment marker, so it
+# uses the exact AST path below instead of this conservative line heuristic.
+LINE_COMMENT_PREFIXES: dict[str, tuple[str, ...]] = {
+    ".js": ("//",), ".jsx": ("//",), ".ts": ("//",), ".tsx": ("//",),
+    ".mjs": ("//",), ".cjs": ("//",), ".go": ("//",), ".rs": ("//",),
+    ".java": ("//",), ".kt": ("//",), ".swift": ("//",), ".c": ("//",),
+    ".h": ("//",), ".cpp": ("//",), ".cc": ("//",), ".hpp": ("//",),
+    ".cs": ("//",), ".scala": ("//",), ".php": ("//",),  # not "#": PHP 8 #[Attr] is code
+    ".sh": ("#",), ".bash": ("#",), ".zsh": ("#",), ".rb": ("#",),
+    ".pl": ("#",), ".r": ("#",), ".lua": ("--",),
+}
+_PY_DOCABLE = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
+def _strip_py_docstrings(tree: ast.AST) -> ast.AST:
+    """Drop the leading string-literal statement from every docable scope.
+
+    Mutates the tree in place and returns it. After stripping, two trees that
+    differ only in docstrings (or comments, which never enter the AST) dump
+    identically.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, _PY_DOCABLE):
+            body = node.body
+            if (body and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)):
+                node.body = body[1:]
+    return tree
+
+
+def _py_doc_only(old_src: str, new_src: str) -> bool:
+    """Decide whether a Python edit is a semantic no-op.
+
+    Compares the docstring-stripped ASTs of the two revisions. `ast.dump`
+    omits line numbers, so comments, docstrings, and pure reformats (whitespace,
+    reflows) do not register; only a semantic (executable) difference makes the
+    dumps diverge. AST-identity is a strictly safe short-circuit: by definition
+    there is no behaviour change for a correctness reviewer to act on.
+
+    Args:
+        old_src: File contents at HEAD.
+        new_src: Working-tree file contents.
+
+    Returns:
+        True when the two revisions are semantically identical — only comments,
+        docstrings, or formatting changed. False on any syntax error (degrade
+        toward review).
+    """
+    try:
+        a = ast.dump(_strip_py_docstrings(ast.parse(old_src)))
+        b = ast.dump(_strip_py_docstrings(ast.parse(new_src)))
+    except SyntaxError:
+        return False
+    return a == b
+
+
+def _line_doc_only(path: str, prefixes: tuple[str, ...]) -> bool:
+    """Decide whether a non-Python edit changed only comments/blank lines.
+
+    Conservative line heuristic: every added/removed diff line must be blank or
+    start with a full-line comment token. Anything else — including block
+    comments and string-literal prose we cannot prove are non-code — counts as
+    code and suppresses the short-circuit, so we under-claim doc-only rather
+    than skip review on a real change.
+
+    Args:
+        path: Repo-root-relative file path.
+        prefixes: Full-line comment tokens for the file's language.
+
+    Returns:
+        True when at least one line changed and every changed line is blank or a
+        line comment.
+    """
+    out = git("diff", "HEAD", "--unified=0", "--no-renames", "--", path)
+    if not out.strip():
+        return False
+    saw_change = False
+    for line in out.splitlines():
+        if not line or line[0] not in "+-" or line.startswith(("+++", "---")):
+            continue
+        content = line[1:].strip()
+        saw_change = True
+        if content and not content.startswith(prefixes):
+            return False
+    return saw_change
+
+
 @dataclass
 class FileChange:
     path: str
@@ -96,10 +228,14 @@ class FileChange:
     status: str = "M"          # M, A, D, R...
     binary: bool = False
     klass: str = "other"       # code | docs | data | other
-    cognitive: int = 0         # python cognitive complexity (max function)
-    cyclomatic: int = 0        # non-python cyclomatic complexity (max function)
+    cognitive: int = 0         # python cognitive complexity (max touched fn)
+    cyclomatic: int = 0        # non-python cyclomatic complexity (max touched fn)
     sensitivity: list[str] = field(default_factory=list)
     gravity: float = 0.0       # bug-fix-commit fraction in recent history
+    # New-side line numbers the diff touched; None = whole file (added/untracked
+    # or unparseable diff → treat every line as changed, degrading toward review).
+    changed_lines: set[int] | None = None
+    doc_only: bool = False     # diff touched only comments/docstrings/blank lines
 
 
 def classify(path: str) -> str:
@@ -176,17 +312,45 @@ def line_count(path: str) -> int:
         return 0
 
 
+def _max_touched(
+    per_fn: list[tuple[int, int, int]], changed: set[int] | None
+) -> int:
+    """Max complexity among functions whose body the diff touched.
+
+    Args:
+        per_fn: (complexity, line_start, line_end) per function, post-change.
+        changed: New-side line numbers the diff touched, or None for whole-file.
+
+    Returns:
+        Highest complexity over touched functions; 0 when the diff touched no
+        function (e.g. a module docstring or version constant changed but no
+        function body did) — this is what keeps such changes off the complex
+        tier despite a gnarly untouched function elsewhere in the file.
+    """
+    touched = [
+        cx for cx, lo, hi in per_fn
+        if changed is None or any(lo <= ln <= hi for ln in changed)
+    ]
+    return max(touched, default=0)
+
+
 def measure_complexity(changes: list[FileChange]) -> None:
     """Fill cognitive (py) / cyclomatic (other) for code files still on disk.
 
-    Operates on the post-change working-tree file (complexity is function-
-    scoped, not diff-scoped). Deleted files have no on-disk content → skipped.
-    Each file independently degrades on failure.
+    Complexity is diff-scoped: we compute each function's complexity on the
+    post-change working-tree file (complexity is function-scoped), then keep
+    only functions the diff actually touched. A change that edits no function
+    body — a docstring rewrite, a version-string bump — scores 0, so file-level
+    complexity in untouched functions no longer escalates it. Deleted files
+    have no on-disk content → skipped. Each file degrades independently.
     """
     py = [c for c in changes if c.klass == "code" and c.path.endswith(".py")
           and c.status != "D" and os.path.isfile(c.path)]
     other = [c for c in changes if c.klass == "code" and not c.path.endswith(".py")
              and c.status != "D" and os.path.isfile(c.path)]
+
+    for c in py + other:
+        c.changed_lines = changed_new_lines(c.path, c.status)
 
     if py:
         try:
@@ -196,11 +360,14 @@ def measure_complexity(changes: list[FileChange]) -> None:
                     with open(c.path, encoding="utf-8", errors="replace") as fh:
                         res = complexipy.code_complexity(fh.read())
                     fns = getattr(res, "functions", []) or []
-                    per_fn = [getattr(f, "complexity", 0) for f in fns]
-                    # Per-function max is the nesting-weighted reasoning-load
-                    # signal (the point of cognitive complexity); fall back to
-                    # the file total only for function-less module code.
-                    c.cognitive = (max(per_fn) if per_fn
+                    per_fn = [(getattr(f, "complexity", 0),
+                               getattr(f, "line_start", 0),
+                               getattr(f, "line_end", 0)) for f in fns]
+                    # With functions, diff-scope to the ones touched (0 if none).
+                    # Function-less module code has no per-function span to
+                    # intersect, so fall back to the module total — losing that
+                    # would silently zero genuinely complex top-level code.
+                    c.cognitive = (_max_touched(per_fn, c.changed_lines) if per_fn
                                    else getattr(res, "complexity", 0))
                 except Exception:
                     pass
@@ -214,9 +381,9 @@ def measure_complexity(changes: list[FileChange]) -> None:
                 try:
                     with open(c.path, encoding="utf-8", errors="replace") as fh:
                         a = lizard.analyze_file.analyze_source_code(c.path, fh.read())
-                    c.cyclomatic = max(
-                        [fn.cyclomatic_complexity for fn in a.function_list] or [0]
-                    )
+                    per_fn = [(fn.cyclomatic_complexity, fn.start_line, fn.end_line)
+                              for fn in a.function_list]
+                    c.cyclomatic = _max_touched(per_fn, c.changed_lines)
                 except Exception:
                     pass
         except Exception:
@@ -247,6 +414,34 @@ def measure_gravity(changes: list[FileChange]) -> None:
         c.gravity = round(fixes / len(msgs), 2)
 
 
+def measure_doc_only(changes: list[FileChange]) -> None:
+    """Flag modified code files whose diff is a semantic no-op.
+
+    Python uses an exact docstring-stripped AST comparison (so comments,
+    docstrings, and reformats all count); other languages use the conservative
+    line-comment heuristic (comments and blank lines only). Only status-M files
+    on disk are considered — a new file is all-new code, a deletion is not docs.
+    """
+    for c in changes:
+        if c.klass != "code" or c.status != "M" or not os.path.isfile(c.path):
+            continue
+        if c.path.endswith(".py"):
+            old = git("show", f"HEAD:{c.path}")
+            if not old:
+                continue
+            try:
+                with open(c.path, encoding="utf-8", errors="replace") as fh:
+                    new = fh.read()
+            except OSError:
+                continue
+            c.doc_only = _py_doc_only(old, new)
+        else:
+            _, ext = os.path.splitext(c.path)
+            prefixes = LINE_COMMENT_PREFIXES.get(ext.lower())
+            if prefixes:
+                c.doc_only = _line_doc_only(c.path, prefixes)
+
+
 def decide(changes: list[FileChange]) -> tuple[str, list[str], list[str], dict]:
     code = [c for c in changes if c.klass == "code"]
     code_loc = sum(c.added + c.deleted for c in code)
@@ -262,6 +457,11 @@ def decide(changes: list[FileChange]) -> tuple[str, list[str], list[str], dict]:
         or len(code) > COMPLEX_FILES or code_loc > COMPLEX_LOC
     )
     docs_data_only = not code
+    # Every changed code file is a semantic no-op (comments/docstrings/reformat).
+    # Checked before the loc-based trivial test so a large doc-only diff (e.g. a
+    # 40-line docstring rewrite) still short-circuits instead of hitting the loc
+    # gate.
+    code_doc_only = bool(code) and all(c.doc_only for c in code)
     trivial = docs_data_only or (
         code_loc <= TRIVIAL_LOC and max_cog <= TRIVIAL_COG and max_ccn <= TRIVIAL_CCN
     )
@@ -280,6 +480,13 @@ def decide(changes: list[FileChange]) -> tuple[str, list[str], list[str], dict]:
         label = "trivial"
         rationale.append("No code files changed (docs/data/config only) and no "
                           "sensitive paths touched.")
+        steps.append("(none — skip code-review; proceed directly to commit)")
+    elif code_doc_only and not sensitive:
+        label = "trivial"
+        rationale.append("Code files changed, but every diff is a semantic "
+                          "no-op — only comments, docstrings, or formatting "
+                          "changed (verified via AST for Python, line-comment "
+                          "scan otherwise) and no sensitive paths touched.")
         steps.append("(none — skip code-review; proceed directly to commit)")
     elif trivial and not sensitive:
         label = "trivial"
@@ -346,6 +553,7 @@ def main() -> int:
     measure_sensitivity(changes)
     measure_gravity(changes)
     measure_complexity(changes)
+    measure_doc_only(changes)
     label, steps, rationale, m = decide(changes)
 
     print("## Preflight determination (deterministic)\n")
