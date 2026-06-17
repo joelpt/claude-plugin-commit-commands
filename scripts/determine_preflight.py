@@ -34,6 +34,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -567,11 +568,19 @@ def decide(
             codex_enabled = os.environ.get("COMMIT_CODEX_REVIEW", "1").strip() != "0"
             codex_companion = resolve_codex_companion() if codex_enabled else None
             if codex_companion:
+                # shlex.quote both interpolations: this string is emitted for the
+                # model to run as a shell command, so a path with a space or shell
+                # metacharacter (repo checked out under such a dir, or a crafted
+                # COMMIT_CODEX_COMPANION) must not break or inject into the command.
+                launch = (
+                    f"node {shlex.quote(codex_companion)} review "
+                    f"--cwd {shlex.quote(repo_root)}"
+                )
                 steps.append(
                     'Run codex review FIRST — launch the parallel Codex/GPT-5 second opinion in '
                     'the background now and do NOT wait; then proceed to the steps below and '
                     'collect it before the issues gate. '
-                    f'Launch: node "{codex_companion}" review --cwd "{repo_root}". '
+                    f'Launch (already shell-quoted, use verbatim): {launch}. '
                     'See "Codex Review" in commit-workflow.md for the auth probe, scope filter, '
                     'and merge protocol.')
             steps.append('Run feature-dev:code-reviewer via the Agent tool '
