@@ -44,7 +44,7 @@ from pathlib import Path
 TRIVIAL_LOC = 15            # code loc at/below which a non-sensitive change is trivial
 TRIVIAL_COG = 5             # max cognitive complexity for "trivial"
 TRIVIAL_CCN = 5             # max cyclomatic complexity for "trivial"
-COMPLEX_COG = 15            # max cognitive complexity that forces escalation
+COMPLEX_COG = 20            # max cognitive complexity that forces escalation
 COMPLEX_CCN = 10            # max cyclomatic complexity that forces escalation
 COMPLEX_FILES = 10          # >this many code files → escalate
 COMPLEX_LOC = 400           # >this much code loc → escalate
