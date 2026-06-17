@@ -518,6 +518,16 @@ def decide(changes: list[FileChange]) -> tuple[str, list[str], list[str], dict]:
             rationale.append("High-gravity files: "
                              + ", ".join(f"{p}({g})" for p, g in high_gravity) + ".")
         if sensitive or complex_:
+            # Codex (GPT-5) second opinion on the high-stakes tiers only, so its
+            # latency/usage is proportional to risk. COMMIT_CODEX_REVIEW=0 opts out.
+            # Emitted FIRST so executing the steps in order launches it (non-blocking,
+            # in the background) before the blocking reviewers, overlapping both.
+            if os.environ.get("COMMIT_CODEX_REVIEW", "1").strip() != "0":
+                steps.append(
+                    'Run codex review FIRST — launch the parallel Codex/GPT-5 second opinion in '
+                    'the background now and do NOT wait; then proceed to the steps below and '
+                    'collect it before the issues gate. See "Codex Review" in '
+                    'commit-workflow.md for the launch/poll/merge protocol.')
             steps.append('Run feature-dev:code-reviewer via the Agent tool '
                          '(subagent_type "feature-dev:code-reviewer") on the in-scope changed files; '
                          'show full findings, auto-fix Critical/Important.')

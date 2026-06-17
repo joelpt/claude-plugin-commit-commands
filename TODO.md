@@ -3,7 +3,7 @@
 ## Architecture
 
 Preflight gating (which of code-review / Codex / /code-review high to run) is decided
-**deterministically** by `scripts/determine-preflight.py`, invoked as a `!`
+**deterministically** by `scripts/determine_preflight.py`, invoked as a `!`
 directive in `commands/commit.md` and `commands/commitall.md`. It measures
 Δloc, cognitive complexity (Python, complexipy), cyclomatic complexity (other
 code, lizard), file classes, path-sensitivity, and git regression-gravity,

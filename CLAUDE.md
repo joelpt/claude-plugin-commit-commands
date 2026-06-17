@@ -6,7 +6,7 @@
 `${CLAUDE_PLUGIN_ROOT}` to the **cached** plugin directory (e.g.
 `~/.claude/plugins/cache/joelpt-claude-plugins/commit-commands/<version>/`), not the working directory.
 
-This means edits to `scripts/determine-preflight.py` are invisible to `/commit` until
+This means edits to `scripts/determine_preflight.py` are invisible to `/commit` until
 you publish a new version and run `claude plugin marketplace update`.
 
 When you need to verify the working-directory variant of the script â€” after changing
@@ -14,7 +14,7 @@ complexity thresholds, adding a sensitivity pattern, tweaking step text, etc. â€
 directly from the repo root:
 
 ```bash
-uv run scripts/determine-preflight.py
+uv run scripts/determine_preflight.py
 ```
 
 The `uv` inline deps (complexipy, lizard) are declared in the script header; `uv` installs

@@ -1,7 +1,7 @@
 ---
 name: commit
 description: Atomic git commit of current session changes with mandatory code review and simplify pre-flight.
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git add:*), Bash(git commit:*), Bash(uv run:*)
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git add:*), Bash(git commit:*), Bash(uv run:*), Bash(node:*), Bash(bash:*), Read
 ---
 
 ## Context
@@ -9,7 +9,7 @@ allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git b
 - Git status: !`git status --short --branch`
 - Change summary: !`git diff --stat HEAD`
 - Recent commits: !`git log --oneline -10`
-- Preflight determination: !`uv run --quiet "${CLAUDE_PLUGIN_ROOT}/scripts/determine-preflight.py" 2>/dev/null || echo "DETERMINER_UNAVAILABLE — fall back to manual model-judged gating (see Steps step 1 fallback)"`
+- Preflight determination: !`uv run --quiet "${CLAUDE_PLUGIN_ROOT}/scripts/determine_preflight.py" 2>/dev/null || echo "DETERMINER_UNAVAILABLE — fall back to manual model-judged gating (see Steps step 1 fallback)"`
 
 **SCOPE:** Only files changed in the **current session**. Ignore unrelated pre-existing changes — do not review, stage, or commit them.
 
