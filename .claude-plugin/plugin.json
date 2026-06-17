@@ -2,7 +2,7 @@
   "name": "commit-commands",
   "displayName": "Commit Commands",
   "description": "Atomic git commits with deterministic, tiered code review pre-flight (feature-dev:code-reviewer + built-in /code-review, plus an optional parallel Codex/GPT-5 second opinion), enforcing project git rules. Replaces claude-plugins-official commit-commands.",
-  "version": "2026.06.17.1",
+  "version": "2026.06.17.2",
   "author": {
     "name": "Joel Thornton",
     "email": "joelpt@gmail.com"

@@ -12,7 +12,7 @@ Before staging, a deterministic gate (`scripts/determine_preflight.py`) measures
 
 - **trivial** (docs/data, semantic no-ops, tiny low-complexity diffs) → no review; commit directly.
 - **standard** → `/code-review`.
-- **sensitive / complex** → `feature-dev:code-reviewer` + `/code-review` (high on complex), **plus a parallel Codex (GPT-5) second opinion**.
+- **sensitive / complex** → `feature-dev:code-reviewer` + `/code-review` (high on complex), **plus a parallel Codex (GPT-5) second opinion when the codex plugin is installed**.
 
 ### Codex second opinion
 
@@ -22,10 +22,11 @@ Codex findings tagged `[P1]`/`[P2]` are auto-fixed (Critical/Important); lower f
 
 Requirements and behavior:
 
-- The codex plugin must be installed and authenticated (`codex login` / `/codex:setup`); the pre-flight probes readiness and pauses to ask if it is not ready.
-- If the codex plugin is absent, Codex review is skipped silently — it never blocks a commit.
+- **Adaptive and silent:** the determiner emits the Codex step only when the codex plugin is installed. On a host without it the step never appears — nothing is checked, nothing is printed, and the commit flow is unchanged.
+- If codex is installed but not authenticated, the pre-flight pauses once to ask you to `codex login` (or skip for this commit).
 - Auth runs through your OpenAI/Codex plan, not a metered Anthropic API key.
-- Opt out by setting `COMMIT_CODEX_REVIEW=0` in the environment.
+- **Cross-platform:** the install probe is pure Python (`pathlib`), so it resolves identically on macOS, Linux, and Windows (including WSL2). Point `COMMIT_CODEX_COMPANION` at a `codex-companion.mjs` for a non-standard install.
+- Opt out entirely with `COMMIT_CODEX_REVIEW=0` in the environment.
 
 ## Install
 
@@ -41,9 +42,9 @@ Then restart Claude Code. Requires read access to the private marketplace repo (
 ```text
 .claude-plugin/plugin.json   ← plugin manifest
 commands/                    ← /commit, /commitall
-scripts/                     ← pre-flight determiner + codex-path resolver
+scripts/                     ← pre-flight determiner (incl. codex resolution)
 shared/                      ← shared commit logic
-tst/                         ← determiner + resolver tests
+tst/                         ← determiner tests
 ```
 
 Distributed via the [`joelpt-claude-plugins`](https://github.com/joelpt/joelpt-claude-plugins)

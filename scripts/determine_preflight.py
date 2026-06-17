@@ -37,6 +37,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # ---- tuning thresholds (personal tool; tune freely) ------------------------
 TRIVIAL_LOC = 15            # code loc at/below which a non-sensitive change is trivial
@@ -442,7 +443,46 @@ def measure_doc_only(changes: list[FileChange]) -> None:
                 c.doc_only = _line_doc_only(c.path, prefixes)
 
 
-def decide(changes: list[FileChange]) -> tuple[str, list[str], list[str], dict]:
+def resolve_codex_companion() -> str | None:
+    """Locate the codex plugin's companion script, or None if not installed.
+
+    Pure pathlib so it resolves identically on macOS, Linux, and Windows
+    (including WSL2). Prefers the version-stable marketplace clone, then the
+    newest cached version; honors a COMMIT_CODEX_COMPANION override for
+    non-standard installs. Any failure degrades to None so the optional Codex
+    review is skipped silently rather than perturbing the commit flow.
+
+    Returns:
+        Absolute path to codex-companion.mjs, or None when codex is absent.
+    """
+    try:
+        override = os.environ.get("COMMIT_CODEX_COMPANION", "").strip()
+        if override:
+            return override if Path(override).is_file() else None
+        base = Path.home() / ".claude" / "plugins"
+        rel = Path("plugins") / "codex" / "scripts" / "codex-companion.mjs"
+        stable = base / "marketplaces" / "openai-codex" / rel
+        if stable.is_file():
+            return str(stable)
+        cache = base / "cache" / "openai-codex" / "codex"
+        if cache.is_dir():
+            versions = sorted(
+                (d for d in cache.iterdir() if d.is_dir()),
+                key=lambda d: [int(p) if p.isdigit() else 0 for p in d.name.split(".")],
+                reverse=True,
+            )
+            for d in versions:
+                cand = d / "scripts" / "codex-companion.mjs"
+                if cand.is_file():
+                    return str(cand)
+        return None
+    except Exception:
+        return None
+
+
+def decide(
+    changes: list[FileChange], repo_root: str = "."
+) -> tuple[str, list[str], list[str], dict]:
     code = [c for c in changes if c.klass == "code"]
     code_loc = sum(c.added + c.deleted for c in code)
     total_loc = sum(c.added + c.deleted for c in changes)
@@ -519,15 +559,21 @@ def decide(changes: list[FileChange]) -> tuple[str, list[str], list[str], dict]:
                              + ", ".join(f"{p}({g})" for p, g in high_gravity) + ".")
         if sensitive or complex_:
             # Codex (GPT-5) second opinion on the high-stakes tiers only, so its
-            # latency/usage is proportional to risk. COMMIT_CODEX_REVIEW=0 opts out.
-            # Emitted FIRST so executing the steps in order launches it (non-blocking,
-            # in the background) before the blocking reviewers, overlapping both.
-            if os.environ.get("COMMIT_CODEX_REVIEW", "1").strip() != "0":
+            # latency/usage is proportional to risk. Emitted ONLY when the codex
+            # plugin is actually installed (resolve returns a path) so a codexless
+            # host stays completely silent — no step, no check. COMMIT_CODEX_REVIEW=0
+            # opts out even when installed. Emitted FIRST so in-order execution
+            # launches it (non-blocking, background) before the blocking reviewers.
+            codex_enabled = os.environ.get("COMMIT_CODEX_REVIEW", "1").strip() != "0"
+            codex_companion = resolve_codex_companion() if codex_enabled else None
+            if codex_companion:
                 steps.append(
                     'Run codex review FIRST — launch the parallel Codex/GPT-5 second opinion in '
                     'the background now and do NOT wait; then proceed to the steps below and '
-                    'collect it before the issues gate. See "Codex Review" in '
-                    'commit-workflow.md for the launch/poll/merge protocol.')
+                    'collect it before the issues gate. '
+                    f'Launch: node "{codex_companion}" review --cwd "{repo_root}". '
+                    'See "Codex Review" in commit-workflow.md for the auth probe, scope filter, '
+                    'and merge protocol.')
             steps.append('Run feature-dev:code-reviewer via the Agent tool '
                          '(subagent_type "feature-dev:code-reviewer") on the in-scope changed files; '
                          'show full findings, auto-fix Critical/Important.')
@@ -564,7 +610,7 @@ def main() -> int:
     measure_gravity(changes)
     measure_complexity(changes)
     measure_doc_only(changes)
-    label, steps, rationale, m = decide(changes)
+    label, steps, rationale, m = decide(changes, toplevel or os.getcwd())
 
     print("## Preflight determination (deterministic)\n")
     print(f"- Files: {m['files']}  (code: {m['code_files']})")

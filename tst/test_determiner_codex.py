@@ -4,9 +4,11 @@
 The determiner imports cleanly under plain python3: complexipy/lizard are
 imported lazily inside measure_complexity(), so decide()/measure_sensitivity()
 run without uv or those deps. We assert the determiner emits a "run codex review"
-step exactly on the escalated tiers (sensitive/complex), never on trivial, and
-that COMMIT_CODEX_REVIEW=0 suppresses it. The flag is read inside decide() at
-call time, so toggling os.environ between cases needs no re-import.
+step first (so in-order execution launches it non-blocking) on the escalated
+tiers, never on trivial, suppresses it when COMMIT_CODEX_REVIEW=0, and — the
+adaptive contract — emits nothing when the codex plugin is not installed. The
+codex install probe is monkeypatched so the test is deterministic regardless of
+whether codex is installed on the host running it.
 """
 from __future__ import annotations
 
@@ -18,6 +20,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import determine_preflight as dp  # noqa: E402  -- sibling module on sys.path
+
+FAKE = "/fake/codex-companion.mjs"
 
 
 def has_codex(steps: list[str]) -> bool:
@@ -41,11 +45,17 @@ def codex_first(steps: list[str]) -> bool:
     return ci >= 0 and ri >= 0 and ci < ri
 
 
+def set_codex_installed(installed: bool) -> None:
+    """Monkeypatch the codex install probe so cases are host-independent."""
+    dp.resolve_codex_companion = (lambda: FAKE) if installed else (lambda: None)
+
+
 def main() -> int:
     """Run the determiner Codex-step assertions; return 1 on any failure."""
     failures: list[str] = []
 
     os.environ["COMMIT_CODEX_REVIEW"] = "1"
+    set_codex_installed(True)
 
     c = dp.FileChange(path="src/auth/login.js", added=6, deleted=1,
                       status="M", klass="code")
@@ -53,6 +63,8 @@ def main() -> int:
     label, steps, *_ = dp.decide([c])
     if label != "sensitive" or not has_codex(steps) or not codex_first(steps):
         failures.append(f"sensitive: label={label} steps={steps}")
+    if FAKE not in " ".join(steps):
+        failures.append(f"sensitive: resolved companion path not embedded: {steps}")
 
     c2 = dp.FileChange(path="src/engine.js", added=500, deleted=0,
                        status="A", klass="code")
@@ -66,7 +78,19 @@ def main() -> int:
     if label != "trivial" or has_codex(steps):
         failures.append(f"trivial: label={label} steps={steps}")
 
+    # Adaptive contract: codex not installed -> no codex step at all (silent),
+    # but the rest of the escalated review still runs.
+    set_codex_installed(False)
+    c5 = dp.FileChange(path="src/auth/login.js", added=6, deleted=1,
+                       status="M", klass="code")
+    dp.measure_sensitivity([c5])
+    label, steps, *_ = dp.decide([c5])
+    if label != "sensitive" or has_codex(steps) or _index(steps, "feature-dev:code-reviewer") < 0:
+        failures.append(f"not-installed: label={label} steps={steps}")
+
+    # Kill switch: COMMIT_CODEX_REVIEW=0 suppresses codex even when installed.
     os.environ["COMMIT_CODEX_REVIEW"] = "0"
+    set_codex_installed(True)
     c4 = dp.FileChange(path="src/auth/login.js", added=6, deleted=1,
                        status="M", klass="code")
     dp.measure_sensitivity([c4])
@@ -77,7 +101,7 @@ def main() -> int:
     if failures:
         print("FAIL:\n" + "\n".join(failures))
         return 1
-    print("PASS: determiner codex-step emission (sensitive, complex, trivial, killswitch)")
+    print("PASS: codex step (sensitive, complex, trivial, not-installed, killswitch)")
     return 0
 
 

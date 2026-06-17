@@ -1,7 +1,7 @@
 ---
 name: commit
 description: Atomic git commit of current session changes with mandatory code review and simplify pre-flight.
-allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git add:*), Bash(git commit:*), Bash(uv run:*), Bash(node:*), Bash(bash:*), Read
+allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git add:*), Bash(git commit:*), Bash(uv run:*), Bash(node:*), Read
 ---
 
 ## Context

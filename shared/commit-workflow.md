@@ -23,23 +23,23 @@ STEPS:
 
 ## Codex Review (parallel second opinion)
 
-When the preflight steps include **"run codex review"**, run it *concurrently* with the other review steps so its latency overlaps theirs instead of adding to them.
+When the preflight steps include a **"run codex review"** directive, run it *concurrently* with the other review steps so its latency overlaps theirs instead of adding to them.
 It is a Codex (GPT-5) adversarial second opinion via the OpenAI codex plugin's companion script, invoked directly because the `/codex:review` slash command is `disable-model-invocation` (the model cannot call it).
+The determiner emits this directive **only when the codex plugin is installed**, and embeds the exact, already-resolved launch command — `node "<companion>" review --cwd "<repo-root>"` — so there is nothing to resolve here, and a host without codex never sees this step at all. Use the embedded path/command verbatim; do not construct your own.
 
 **Phase A — readiness (before running the other review steps):**
 
-1. Resolve the companion: `COMPANION=$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/codex-path.sh")`.
-   If it prints `CODEX_COMPANION_NOT_FOUND`, the codex plugin is not installed — skip Codex review entirely, say so once, and continue with the other steps. A missing optional reviewer must never block a commit.
-2. Probe auth: `node "$COMPANION" setup --json` and read `.ready`.
+1. Probe auth with the embedded companion path: `node "<companion>" setup --json`, then read `.ready`.
    - `.ready == true` → go to Phase B.
-   - `.ready == false` → `AskUserQuestion` surfacing the probe's `.nextSteps` (e.g. "Run `codex login`"), with options "I've authenticated — re-check" and "Skip Codex this commit". On re-check, re-run the probe; if still not ready, skip. Never silently proceed as if Codex ran.
+   - `.ready == false` → `AskUserQuestion` surfacing the probe's `.nextSteps` (e.g. "Run `codex login`"), with options "I've authenticated — re-check" and "Skip Codex this commit". On re-check, re-run the probe; if still not ready, skip.
+   - the probe errors or the companion has gone missing → skip Codex **silently** and continue. A missing optional reviewer must never block a commit.
 
 **Phase B — launch (returns immediately):**
 
-1. Launch in the background — this is what makes it parallel — with `Bash` and `run_in_background: true`:
+1. Launch the directive's embedded command in the background — this is what makes it parallel — with `Bash` and `run_in_background: true`, e.g.:
 
    ```bash
-   node "$COMPANION" review --cwd "$(git rev-parse --show-toplevel)"
+   node "<companion>" review --cwd "<repo-root>"
    ```
 
 2. Record the background task id and do not wait — proceed straight to the other preflight steps.
