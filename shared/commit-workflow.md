@@ -67,7 +67,7 @@ Chain the deterministic command pairs to halve round-trips; the only step needin
 model inspection is the staged-diff gate between them — never chain across it:
 
 1. `git add <specific files> && git diff --staged` — one call; **inspect** the staged diff output before proceeding.
-2. `git commit -m "<<Conventional Commits format message>>" && git log -1 --stat` — one call; confirm.
+2. `git commit -m "<<Conventional Commits format message>>" && git log -1 --stat && echo '∴ committed ∴'` — one call; confirm.
 
 ## Git Rules (IMMUTABLE)
 
