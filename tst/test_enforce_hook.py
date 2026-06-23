@@ -2,9 +2,9 @@
 """Integration tests for the enforce-commit-commands PreToolUse hook.
 
 The hook is exercised as a subprocess (the way Claude Code runs it) with an
-isolated ``HOME`` so the credit store and config resolve under a tmp dir. A
-credit is minted by invoking ``commit_credit.py grant`` with the same isolated
-``HOME`` and a session id, then the hook is fed a matching Bash payload.
+isolated ``HOME`` so the grant store and config resolve under a tmp dir. A
+permissions grant is minted by invoking ``commit_grant.py grant`` with the same
+isolated ``HOME`` and a session id, then the hook is fed a matching Bash payload.
 
 Exit-code contract: 0 = allow, 2 = block.
 """
@@ -20,7 +20,7 @@ import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent
 _HOOK = _ROOT / "hooks" / "enforce_commit_commands_hook.py"
-_CREDIT = _ROOT / "scripts" / "commit_credit.py"
+_GRANT = _ROOT / "scripts" / "commit_grant.py"
 
 
 def _env(home: Path) -> dict[str, str]:
@@ -29,9 +29,9 @@ def _env(home: Path) -> dict[str, str]:
 
 
 def _grant(home: Path, session_id: str) -> None:
-    """Mint a credit for a session under the isolated HOME."""
+    """Mint a permissions grant for a session under the isolated HOME."""
     proc = subprocess.run(
-        [sys.executable, str(_CREDIT), "grant", "--session", session_id],
+        [sys.executable, str(_GRANT), "grant", "--session", session_id],
         env=_env(home),
         capture_output=True,
         text=True,
@@ -71,29 +71,31 @@ def test_non_commit_bash_is_allowed(tmp_path: Path) -> None:
     assert proc.returncode == 0
 
 
-def test_raw_commit_without_credit_is_blocked(tmp_path: Path) -> None:
-    """A raw git commit with no credit for the session is blocked."""
+def test_raw_commit_without_grant_is_blocked(tmp_path: Path) -> None:
+    """A raw git commit with no grant for the session is blocked."""
     proc = _run_hook(tmp_path, _bash_payload('git commit -m "x"'))
     assert proc.returncode == 2
     assert "BLOCKED" in proc.stderr
+    assert "grant-commit-privileges" in proc.stderr
+    assert "--legitimate-reason" in proc.stderr
 
 
-def test_raw_commit_with_credit_is_allowed(tmp_path: Path) -> None:
-    """A git commit is allowed once the session holds a valid credit."""
+def test_raw_commit_with_grant_is_allowed(tmp_path: Path) -> None:
+    """A git commit is allowed once the session holds a valid grant."""
     _grant(tmp_path, "sess-a")
     proc = _run_hook(tmp_path, _bash_payload('git commit -m "x"', "sess-a"))
     assert proc.returncode == 0
 
 
-def test_credit_is_session_scoped(tmp_path: Path) -> None:
-    """A credit minted for one session does not authorize another's commit."""
+def test_grant_is_session_scoped(tmp_path: Path) -> None:
+    """A grant minted for one session does not authorize another's commit."""
     _grant(tmp_path, "sess-a")
     proc = _run_hook(tmp_path, _bash_payload('git commit -m "x"', "sess-b"))
     assert proc.returncode == 2
 
 
 def test_multiple_commits_under_one_grant(tmp_path: Path) -> None:
-    """The credit is a lease: several commits in one run all pass on one grant."""
+    """The grant is a lease: several commits in one run all pass on one grant."""
     _grant(tmp_path, "sess-a")
     for _ in range(3):
         proc = _run_hook(tmp_path, _bash_payload('git commit -m "x"', "sess-a"))
@@ -113,7 +115,7 @@ def test_filename_false_positive_is_allowed(tmp_path: Path) -> None:
 
 
 def test_enforcement_disabled_allows_raw_commit(tmp_path: Path) -> None:
-    """With enforcement disabled in config, raw commits pass with no credit."""
+    """With enforcement disabled in config, raw commits pass with no grant."""
     cfg = tmp_path / ".config" / "commit-commands" / "config.json"
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text(json.dumps({"enforce_commit_commands_use": False}), encoding="utf-8")
@@ -121,11 +123,11 @@ def test_enforcement_disabled_allows_raw_commit(tmp_path: Path) -> None:
     assert proc.returncode == 0
 
 
-def test_expired_credit_is_blocked(tmp_path: Path) -> None:
-    """A credit past its TTL no longer authorizes a commit."""
+def test_expired_grant_is_blocked(tmp_path: Path) -> None:
+    """A grant past its TTL no longer authorizes a commit."""
     cfg = tmp_path / ".config" / "commit-commands" / "config.json"
     cfg.parent.mkdir(parents=True, exist_ok=True)
-    cfg.write_text(json.dumps({"commit_credit_ttl_seconds": 1}), encoding="utf-8")
+    cfg.write_text(json.dumps({"commit_grant_ttl_seconds": 1}), encoding="utf-8")
     _grant(tmp_path, "sess-a")
     import time
 
@@ -135,7 +137,7 @@ def test_expired_credit_is_blocked(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("variant", ["git commit", "git -C /repo commit -m m", "git   commit"])
-def test_commit_variants_blocked_without_credit(tmp_path: Path, variant: str) -> None:
+def test_commit_variants_blocked_without_grant(tmp_path: Path, variant: str) -> None:
     """Assorted real git-commit spellings are all gated."""
     proc = _run_hook(tmp_path, _bash_payload(variant))
     assert proc.returncode == 2

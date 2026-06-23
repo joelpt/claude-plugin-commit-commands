@@ -4,10 +4,10 @@ Blocks Bash tool calls that invoke ``git commit`` directly, enforcing the
 CLAUDE.md policy that ``/commit`` or ``/commitall`` is the ONLY sanctioned
 commit path (they enforce preflight, the code-review gate, and message hygiene).
 
-A commit is allowed only when the current Claude session holds a valid *commit
-credit* (see ``scripts/commit_credit.py``). ``/commit`` and ``/commitall`` mint
-that credit when invoked, via a ``!`` context directive that runs
-``commit_credit.py grant``. The session id ties the credit to one session
+A commit is allowed only when the current Claude session holds a valid
+*permissions grant* (see ``scripts/commit_grant.py``). ``/commit`` and
+``/commitall`` mint that grant when invoked, via a ``!`` context directive that
+runs ``commit_grant.py grant``. The session id ties the grant to one session
 (``session_id`` from the hook payload == ``CLAUDE_CODE_SESSION_ID`` in the
 granting shell), and a short TTL bounds its lifetime.
 
@@ -18,10 +18,10 @@ sanctioned command flow mints.
 
 Config (``~/.config/commit-commands/config.json``):
     enforce_commit_commands_use (bool, default true): set to false to disable.
-    commit_credit_ttl_seconds (int, default 300): credit lifetime.
+    commit_grant_ttl_seconds (int, default 300): permissions-grant lifetime.
 
 Exit codes:
-    0 — allow (not a commit, or credited, or enforcement disabled)
+    0 — allow (not a commit, or granted, or enforcement disabled)
     2 — block (unsanctioned raw git commit)
 """
 
@@ -45,30 +45,37 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 try:
-    import commit_credit  # noqa: E402  -- sibling module, path bootstrapped above
+    import commit_grant  # noqa: E402  -- sibling module, path bootstrapped above
 
     _import_error: BaseException | None = None
 except Exception as exc:  # noqa: BLE001  -- a broken import must not brick commits
-    commit_credit = None  # type: ignore[assignment]
+    commit_grant = None  # type: ignore[assignment]
     _import_error = exc
 
 BLOCK_MESSAGE = (
-    "BLOCKED: raw `git commit` is not allowed — no commit credit for this session.\n"
+    "BLOCKED: raw `git commit` is not allowed — no permissions grant for this session.\n"
     "\n"
     "Policy (CLAUDE.md): /commit and /commitall are the ONLY sanctioned commit\n"
     "paths — they enforce preflight, the code-review gate, and message hygiene.\n"
-    "They mint a short-lived, session-scoped commit credit that lets this gate\n"
-    "pass; a raw `git commit` outside that flow has no credit and is blocked.\n"
+    "They mint a short-lived, session-scoped permissions grant that lets this gate\n"
+    "pass; a raw `git commit` outside that flow has no grant and is blocked.\n"
     "\n"
-    "What to do instead:\n"
+    "What to do instead — almost always:\n"
     "  • Normal session commit  → /commit or /commitall\n"
-    "  • Sibling-repo commit     → run in your terminal:  ! git -C <path> commit …\n"
-    "    (the ! prefix routes it through your shell, not the Bash tool)\n"
     "\n"
-    "If /commit / /commitall cannot accomplish your commit goal here, STOP and\n"
-    "tell the user what is happening — do NOT try to hack around this gate.\n"
+    "Only if /commit / /commitall genuinely CANNOT do the job — character-escaping\n"
+    "the tool path can't express, another sanctioned skill's documented `git commit`\n"
+    "pattern (e.g. a batch `--no-verify` commit tool), or a commit in a repo other\n"
+    "than this session's cwd — open a short, session-scoped window with the opt-in:\n"
     "\n"
-    "To disable this enforcement:  /commit-config"
+    '  /commit-commands:grant-commit-privileges --legitimate-reason "<why /commit(all) cannot be used>"\n'
+    "\n"
+    "It mints the grant ONLY with an explicit, justified reason. NOT legitimate:\n"
+    "skipping a pre-commit hook, or simply not wanting the review flow. If you have\n"
+    "no justified reason, STOP and tell the user you are blocked and why — do NOT\n"
+    "hack around this gate by any other means.\n"
+    "\n"
+    "To disable this enforcement entirely:  /commit-config"
 )
 
 
@@ -107,18 +114,18 @@ def main() -> None:
     if commit_tail.startswith(("--help", "-h")):
         sys.exit(0)
 
-    # A broken credit module must not brick committing globally: fail open, but
+    # A broken grant module must not brick committing globally: fail open, but
     # leave a diagnostic (visible only in the debug log on exit 0). Near-impossible
-    # in practice — commit_credit is pure stdlib.
-    if commit_credit is None:
+    # in practice — commit_grant is pure stdlib.
+    if commit_grant is None:
         sys.stderr.write(
-            f"commit-commands: credit module failed to import ({_import_error!r}); "
+            f"commit-commands: grant module failed to import ({_import_error!r}); "
             "enforcement is failing OPEN.\n"
         )
         sys.exit(0)
 
     session_id = data.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-    if commit_credit.is_authorized(session_id):
+    if commit_grant.is_authorized(session_id):
         sys.exit(0)
 
     print(BLOCK_MESSAGE, file=sys.stderr)

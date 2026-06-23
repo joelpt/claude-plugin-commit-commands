@@ -10,7 +10,7 @@ allowed-tools: Bash(git status:*), Bash(git diff:*), Bash(git log:*), Bash(git b
 - Change summary: !`git diff --stat HEAD`
 - Recent commits: !`git log --oneline -10`
 - Preflight determination: !`uv run --quiet "${CLAUDE_PLUGIN_ROOT}/scripts/determine_preflight.py" 2>/dev/null || echo "DETERMINER_UNAVAILABLE — fall back to manual model-judged gating (see Steps step 1 fallback)"`
-- Commit credit: !`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/commit_credit.py" grant 2>/dev/null || echo "credit grant unavailable — commits may be blocked by the enforce gate"`
+- Permissions grant: !`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/commit_grant.py" grant 2>/dev/null || echo "permissions grant unavailable — commits may be blocked by the enforce gate"`
 
 **SCOPE:** **ALL** uncommitted changes in the working tree. Ignore any session-only restriction — the loop ends only when `git status` is clean.
 

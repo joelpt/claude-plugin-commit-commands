@@ -70,10 +70,10 @@ model inspection is the staged-diff gate between them — never chain across it:
 2. `git commit -m "<<Conventional Commits format message>>" && git log -1 --stat` — one call; confirm.
 
 The enforce gate lets these commits through because invoking this command minted a
-short-lived, session-scoped **commit credit** (the "Commit credit" line in `## Context`).
-If a `git commit` here is unexpectedly **BLOCKED** by the gate, the credit grant failed
-(see that Context line) — STOP, tell the user what happened, and do **not** attempt to
-bypass the gate with a raw `git commit` or any other workaround.
+short-lived, session-scoped **permissions grant** (the "Permissions grant" line in
+`## Context`). If a `git commit` here is unexpectedly **BLOCKED** by the gate, the
+grant failed (see that Context line) — STOP, tell the user what happened, and do
+**not** attempt to bypass the gate with a raw `git commit` or any other workaround.
 
 ## Git Rules (IMMUTABLE)
 

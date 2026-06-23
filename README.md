@@ -32,17 +32,29 @@ Requirements and behavior:
 
 A `PreToolUse` hook (`hooks/enforce_commit_commands_hook.py`) blocks raw `git commit` Bash calls, redirecting you to `/commit` / `/commitall` so every commit goes through the pre-flight review and message hygiene.
 
-Authorization works by **commit credit**, not by a magic string:
+Authorization works by **permissions grant**, not by a magic string:
 
-- Invoking `/commit` or `/commitall` mints a short-lived, **session-scoped** credit (a `!` context directive runs `scripts/commit_credit.py grant`).
-- The hook allows a `git commit` only when the current session holds a valid credit — keyed by `CLAUDE_CODE_SESSION_ID`, so a credit minted in one session never authorizes a commit in another.
-- A credit is a **lease**, not a single-use token: one `/commitall` run can produce several atomic commits under a single grant. Staleness is bounded by the TTL (default **300s**; widen with `commit_credit_ttl_seconds` in the config for flows whose review/HITL pauses might outlast it).
+- Invoking `/commit` or `/commitall` mints a short-lived, **session-scoped** grant (a `!` context directive runs `scripts/commit_grant.py grant`).
+- The hook allows a `git commit` only when the current session holds a valid grant — keyed by `CLAUDE_CODE_SESSION_ID`, so a grant minted in one session never authorizes a commit in another.
+- A grant is a **lease**, not a single-use token: one `/commitall` run can produce several atomic commits under a single grant. Staleness is bounded by the TTL (default **300s**; widen with `commit_grant_ttl_seconds` in the config for flows whose review/HITL pauses might outlast it).
 
-This replaces the earlier `∴ committed ∴` sentinel, which the model could trivially forge by echoing the phrase after a raw commit. There is no longer any token to append: a credit can exist only if the sanctioned command flow actually ran.
+This replaces the earlier `∴ committed ∴` sentinel, which the model could trivially forge by echoing the phrase after a raw commit. There is no longer any token to append: a grant can exist only if the sanctioned command flow actually ran.
 
-If `/commit` / `/commitall` genuinely cannot accomplish a commit (e.g. a sibling repo the command's cwd can't reach), commit it from your terminal with the `!` prefix — `! git -C <path> commit …` — which routes through your shell, bypassing the Bash-tool hook. Otherwise, when a commit is blocked, stop and surface it rather than working around the gate.
+### The escape hatch: `/commit-commands:grant-commit-privileges`
 
-Toggle the gate with `/commit-config` (sets `enforce_commit_commands_use`).
+Some legitimate flows must call `git commit` directly and cannot route through `/commit(all)` — character-escaping edge cases, or another sanctioned skill's pattern (e.g. a batch tool that makes retroactive `--no-verify` commits across many sibling repos). For those, `/commit-commands:grant-commit-privileges` opens the same grant window on demand.
+
+It is deliberately a **point-of-use opt-in**: invoked with no arguments it only explains when a grant is (and isn't) justified and refuses to do anything. It mints the grant *only* when re-invoked with an explicit reason:
+
+```text
+/commit-commands:grant-commit-privileges --legitimate-reason "<why /commit(all) cannot be used>"
+```
+
+The reason is recorded with the grant. Skipping a pre-commit hook, or simply not wanting the review flow, are **not** legitimate reasons — when a commit is blocked and no justified case applies, stop and surface it rather than working around the gate.
+
+If you'd rather commit from outside Claude entirely, the `!` prefix routes through your shell, bypassing the Bash-tool hook: `! git -C <path> commit …`.
+
+Toggle the gate itself with `/commit-config` (sets `enforce_commit_commands_use`).
 
 ## Install
 
@@ -57,11 +69,11 @@ Then restart Claude Code. Requires read access to the private marketplace repo (
 
 ```text
 .claude-plugin/plugin.json   ← plugin manifest
-commands/                    ← /commit, /commitall, /commit-config
+commands/                    ← /commit, /commitall, /commit-config, /grant-commit-privileges
 hooks/                       ← enforce-commit-commands PreToolUse gate
-scripts/                     ← pre-flight determiner, commit-credit + config CLIs
+scripts/                     ← pre-flight determiner, commit-grant + config CLIs
 shared/                      ← shared commit logic
-tst/                         ← determiner, credit, and hook tests
+tst/                         ← determiner, grant, and hook tests
 ```
 
 Distributed via the [`joelpt-claude-plugins`](https://github.com/joelpt/joelpt-claude-plugins)
