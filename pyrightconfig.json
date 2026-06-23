@@ -1,4 +1,4 @@
 {
-  "extraPaths": ["scripts"],
-  "include": ["scripts", "tst"]
+  "extraPaths": ["scripts", "hooks"],
+  "include": ["scripts", "hooks", "tst"]
 }

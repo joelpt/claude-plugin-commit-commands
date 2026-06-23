@@ -4,29 +4,72 @@ Blocks Bash tool calls that invoke ``git commit`` directly, enforcing the
 CLAUDE.md policy that ``/commit`` or ``/commitall`` is the ONLY sanctioned
 commit path (they enforce preflight, the code-review gate, and message hygiene).
 
-The sentinel ``∴ committed ∴`` in the command marks a call that originated from
-the /commit skill's own commit loop (commit-workflow.md always chains:
-``git commit -m "..." && git log -1 --stat && echo '∴ committed ∴'``).
-The full phrase (not just ``∴``) avoids false-passes on commit messages or
-filenames that happen to contain the THEREFORE symbol.
+A commit is allowed only when the current Claude session holds a valid *commit
+credit* (see ``scripts/commit_credit.py``). ``/commit`` and ``/commitall`` mint
+that credit when invoked, via a ``!`` context directive that runs
+``commit_credit.py grant``. The session id ties the credit to one session
+(``session_id`` from the hook payload == ``CLAUDE_CODE_SESSION_ID`` in the
+granting shell), and a short TTL bounds its lifetime.
+
+This replaces the old ``∴ committed ∴`` sentinel, which the model could forge by
+simply echoing the phrase after a raw commit. There is no longer a magic string
+to append: authorization lives in out-of-band per-session state that only the
+sanctioned command flow mints.
 
 Config (``~/.config/commit-commands/config.json``):
     enforce_commit_commands_use (bool, default true): set to false to disable.
+    commit_credit_ttl_seconds (int, default 300): credit lifetime.
 
 Exit codes:
-    0 — allow (not a commit, or sanctioned, or enforcement disabled)
+    0 — allow (not a commit, or credited, or enforcement disabled)
     2 — block (unsanctioned raw git commit)
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
-SENTINEL = "∴ committed ∴"
 CONFIG_PATH = Path.home() / ".config" / "commit-commands" / "config.json"
+
+_PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT")
+_SCRIPTS_DIR = (
+    Path(_PLUGIN_ROOT) / "scripts"
+    if _PLUGIN_ROOT
+    else Path(__file__).resolve().parent.parent / "scripts"
+)
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+try:
+    import commit_credit  # noqa: E402  -- sibling module, path bootstrapped above
+
+    _import_error: BaseException | None = None
+except Exception as exc:  # noqa: BLE001  -- a broken import must not brick commits
+    commit_credit = None  # type: ignore[assignment]
+    _import_error = exc
+
+BLOCK_MESSAGE = (
+    "BLOCKED: raw `git commit` is not allowed — no commit credit for this session.\n"
+    "\n"
+    "Policy (CLAUDE.md): /commit and /commitall are the ONLY sanctioned commit\n"
+    "paths — they enforce preflight, the code-review gate, and message hygiene.\n"
+    "They mint a short-lived, session-scoped commit credit that lets this gate\n"
+    "pass; a raw `git commit` outside that flow has no credit and is blocked.\n"
+    "\n"
+    "What to do instead:\n"
+    "  • Normal session commit  → /commit or /commitall\n"
+    "  • Sibling-repo commit     → run in your terminal:  ! git -C <path> commit …\n"
+    "    (the ! prefix routes it through your shell, not the Bash tool)\n"
+    "\n"
+    "If /commit / /commitall cannot accomplish your commit goal here, STOP and\n"
+    "tell the user what is happening — do NOT try to hack around this gate.\n"
+    "\n"
+    "To disable this enforcement:  /commit-config"
+)
 
 
 def _enforcement_enabled() -> bool:
@@ -64,25 +107,21 @@ def main() -> None:
     if commit_tail.startswith(("--help", "-h")):
         sys.exit(0)
 
-    # Allow the /commit skill's sanctioned pattern: commit-workflow.md always
-    # chains the sentinel phrase after git log.
-    if SENTINEL in command:
+    # A broken credit module must not brick committing globally: fail open, but
+    # leave a diagnostic (visible only in the debug log on exit 0). Near-impossible
+    # in practice — commit_credit is pure stdlib.
+    if commit_credit is None:
+        sys.stderr.write(
+            f"commit-commands: credit module failed to import ({_import_error!r}); "
+            "enforcement is failing OPEN.\n"
+        )
         sys.exit(0)
 
-    print(
-        "BLOCKED: raw `git commit` is not allowed.\n"
-        "\n"
-        "Policy (CLAUDE.md): /commit and /commitall are the ONLY sanctioned commit\n"
-        "paths — they enforce preflight, the code-review gate, and message hygiene.\n"
-        "\n"
-        "What to do instead:\n"
-        "  • Normal session commit  → /commit or /commitall\n"
-        "  • Sibling-repo commit    → run in your terminal:  ! git -C <path> commit …\n"
-        "    (the ! prefix routes it through your shell, not the Bash tool)\n"
-        "\n"
-        "To disable this enforcement:  /commit-config",
-        file=sys.stderr,
-    )
+    session_id = data.get("session_id") or os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if commit_credit.is_authorized(session_id):
+        sys.exit(0)
+
+    print(BLOCK_MESSAGE, file=sys.stderr)
     sys.exit(2)
 
 
